@@ -1,0 +1,24 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2015-01-01/deploymentParameters.json#",
+  "contentVersion": "1.0.0.0",
+  "parameters": {
+    "projectprefix": {
+      "value": "{replace with projectprefix name}"
+    },
+    "environment": {
+      "value": "test"
+    },
+    "location": {
+      "value": "{replace with location name}"
+    },
+    "sannamecertificate": {
+      "value": "{replace with domain name}"
+    },
+    "cpu": {
+      "value": "{cpu value in integer type}"
+    },
+    "memory": {
+      "value": "{memory value in string type}"
+    }        
+  }
+}

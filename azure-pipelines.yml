@@ -1,0 +1,142 @@
+# Starter pipeline
+# Start with a minimal pipeline that you can customize to build and deploy your code.
+# Add steps that build, run test, deploys, and mosre:
+# https://aka.ms/yaml
+
+trigger:
+  branches:
+    include:
+      - main
+      - dev*
+  paths:
+    include:
+    - infra
+    - app
+    exclude:
+    - infra/README.md
+    - README.md
+
+
+parameters:
+- name: initialDeployment
+  displayName: DeployAllStages
+  type: boolean
+  default: false
+- name: project
+  displayName: The name of the project
+  type: string
+
+
+variables:
+- name: resourceGroupDeployment
+  value: 'deployment-${{ parameters.project}}-rg'
+- name: resourcesDeploymentNameForStateful
+  value: 'deployment-resource-stateful'
+- name: resourcesDeploymentNameForStateless
+  value: 'deployment-resource-stateless'
+- name: location
+  value: replacewithazurelocation
+- name: projectprefix
+  value: replacewithuniquename
+- name: environmentsuffix
+  value: prod
+- name: reponame
+  value: replacewithreponame
+- name: environment
+  ${{ if eq(variables['Build.SourceBranch'], 'refs/heads/main') }}:
+    value: "prod"
+  ${{ else }}:
+    value: "test"
+- name: resourceGroupNameForStatefulSvc
+  value: 'rg-${{ parameters.project}}-${{ variables.environment}}-stateful'
+- name: resourceGroupNameForStatelessSvc
+  value: 'rg-${{ parameters.project}}-${{ variables.environment}}-stateless'
+
+
+pool:
+  vmImage: 'ubuntu-latest'
+  location: ${variables.location}
+
+
+stages:
+
+# The stage creates a resource group for storing stateful services and stateful service .
+
+- stage: CreateResourceGroup
+  condition: eq('${{ parameters.initialDeployment }}', true)
+  jobs:
+  - job: CreateResourceGroup
+    steps:
+      - task: AzureCLI@2
+        displayName: Deploy task for ResourceGroup
+        inputs:
+          azureSubscription: '${{ variables.environment}}_${{ parameters.project}}-owner-perms'
+          scriptType: bash 
+          scriptLocation: inlineScript
+          useGlobalConfig: false
+          inlineScript: | 
+            cd infra
+            echo ${{ variables.resourceGroupDeployment }}
+            echo ${{ variables.environment}}
+            az stack sub create --name ${{ variables.resourceGroupDeployment }} --delete-resources --yes \
+            --template-file resourcegroups.bicep --parameters ./parameters/${{ variables.environment}}.parameters.resourcegroups.json \
+            --deny-settings-mode 'none' --location ${{ variables.location }}
+
+
+- stage: CreateStatefulresources
+  condition: eq('${{ parameters.initialDeployment }}', true)
+  jobs:
+  - job: Createstatefulresources
+    steps:
+      - task: AzureCLI@2
+        displayName: Deploy task for ResourceGroup
+        inputs:
+          azureSubscription: '${{ variables.environment}}_${{ parameters.project}}-owner-perms'
+          scriptType: bash 
+          scriptLocation: inlineScript
+          useGlobalConfig: false
+          inlineScript: | 
+            cd infra
+            az stack group create --name ${{ variables.resourcesDeploymentNameForStateful }} --delete-resources --yes \
+            --template-file resourcegroupstateful-main.bicep --parameters ./parameters/${{ variables.environment}}.parameters.rgstateful.json \
+            --deny-settings-mode 'none' --resource-group ${{ variables.resourceGroupNameForStatefulSvc }}
+
+- stage: BuildDockerImageandPushToACRandDeployContainerapp
+  condition: always()
+  jobs:
+  - job: BuildDockerImage
+    steps:
+      - task: Docker@1
+        displayName: Build docker image
+        inputs:
+          containerregistrytype: 'Azure Container Registry'
+          azureContainerRegistry: 'acr${{ variables.projectprefix}}${{ variables.environment}}.azurecr.io'
+          azureSubscriptionEndpoint: '${{ variables.environment }}_${{ parameters.project}}-contributor-perms'
+          command: 'Build an image'
+          dockerFile: app/Dockerfile
+
+      - task: Docker@1
+        displayName: Push image to registry
+        inputs:
+          containerregistrytype: 'Azure Container Registry'
+          azureContainerRegistry: 'acr${{ variables.projectprefix}}${{ variables.environment}}.azurecr.io'
+          azureSubscriptionEndpoint: '${{ variables.environment}}_${{ parameters.project}}-contributor-perms'
+          command: 'Push an image'
+
+      - task: AzureCLI@2
+        displayName: Deploy task for stateless resources
+        inputs:
+          azureSubscription: '${{ variables.environment}}_${{ parameters.project}}-owner-perms'
+          scriptType: bash 
+          scriptLocation: inlineScript
+          useGlobalConfig: false
+          inlineScript: | 
+            cd infra && cp ./scripts/resourcegroupstateless-main.sh ./parameters/
+            bash ./parameters/resourcegroupstateless-main.sh -a ${{ variables.projectprefix }} -b ${{ variables.environment}} -c ${{ variables.reponame}}
+            az stack group create --name ${{ variables.resourcesDeploymentNameForStateless }} --delete-resources --yes \
+            --template-file resourcegroupstateless-main.bicep --parameters ./parameters/${{ variables.environment}}.parameters.rgstateless.json \
+            --deny-settings-mode 'none' --resource-group ${{ variables.resourceGroupNameForStatelessSvc }}
+
+
+
+          
